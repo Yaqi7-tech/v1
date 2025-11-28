@@ -1,13 +1,12 @@
-const express = require('express');
-const cors = require('cors');
-const { createProxyMiddleware } = require('http-proxy-middleware');
-const fetch = require('node-fetch');
-
 // 检测是否在Vercel环境中
 const isVercel = process.env.VERCEL;
 
 if (!isVercel) {
-    // 本地开发环境
+    // 本地开发环境 - 使用Express
+    const express = require('express');
+    const cors = require('cors');
+    const { createProxyMiddleware } = require('http-proxy-middleware');
+
     const app = express();
     const PORT = 3000;
 
@@ -62,46 +61,40 @@ if (!isVercel) {
 } else {
     // Vercel无服务器函数
     module.exports = async (req, res) => {
-        // 启用CORS
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+        try {
+            // 启用CORS
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+            res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
-        if (req.method === 'OPTIONS') {
-            res.status(200).end();
-            return;
-        }
+            if (req.method === 'OPTIONS') {
+                res.status(200).end();
+                return;
+            }
 
-        // 处理API请求
-        if (req.url.startsWith('/api/')) {
-            try {
+            // 处理API请求
+            if (req.url && req.url.startsWith('/api/')) {
                 // 构建正确的目标URL
                 const pathPart = req.url.replace('/api', '');
                 const targetUrl = `http://dify.ai-role.cn/v1${pathPart}`;
 
                 console.log('Vercel代理请求:', req.method, targetUrl);
-                console.log('请求头:', req.headers);
-                console.log('请求体:', req.body);
 
-                // 准备请求头，移除可能导致冲突的头
+                // 准备请求头
                 const headers = {
                     'Content-Type': 'application/json',
                     'Accept': 'application/json',
                     'Authorization': req.headers.authorization || ''
                 };
 
-                // 只添加必要的自定义头
-                if (req.headers['user-agent']) {
-                    headers['User-Agent'] = req.headers['user-agent'];
+                // 准备请求体
+                let body = undefined;
+                if (req.method !== 'GET' && req.method !== 'HEAD' && req.body) {
+                    body = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
                 }
 
-                // 准备请求体
-                let body;
-                if (req.method !== 'GET' && req.method !== 'HEAD') {
-                    // 如果req.body已经是字符串，直接使用；否则序列化
-                    body = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
-                    console.log('最终请求体:', body);
-                }
+                // 使用node-fetch进行请求
+                const fetch = require('node-fetch');
 
                 const response = await fetch(targetUrl, {
                     method: req.method,
@@ -109,37 +102,38 @@ if (!isVercel) {
                     body: body
                 });
 
+                // 获取响应内容类型
                 const contentType = response.headers.get('content-type');
-                let data;
+                let responseData;
 
                 if (contentType && contentType.includes('application/json')) {
-                    data = await response.json();
+                    responseData = await response.json();
                 } else {
-                    data = await response.text();
+                    responseData = await response.text();
                 }
 
                 console.log('Vercel代理响应状态:', response.status);
-                console.log('Vercel代理响应数据:', data);
 
-                // 设置响应头
+                // 设置响应头并返回
                 res.setHeader('Content-Type', contentType || 'application/json');
                 res.status(response.status);
-                res.send(data);
-            } catch (error) {
-                console.error('Vercel代理错误:', error);
-                res.status(500).json({
-                    error: '代理服务器错误',
-                    message: error.message,
-                    url: req.url
-                });
+
+                if (typeof responseData === 'object') {
+                    res.json(responseData);
+                } else {
+                    res.send(responseData);
+                }
+
+            } else {
+                // 非API请求返回404，静态文件会由Vercel自动处理
+                res.status(404).json({ error: 'Not found' });
             }
-        } else {
-            // 非API请求返回404，静态文件会由Vercel自动处理
-            res.status(404).json({ error: 'Not found' });
-        }
-    };
-}
-            res.status(404).json({ error: 'Not found' });
+        } catch (error) {
+            console.error('Vercel函数错误:', error);
+            res.status(500).json({
+                error: '服务器内部错误',
+                message: error.message
+            });
         }
     };
 }
