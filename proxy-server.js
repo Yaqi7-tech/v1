@@ -75,25 +75,54 @@ if (!isVercel) {
         // 处理API请求
         if (req.url.startsWith('/api/')) {
             try {
-                const targetUrl = `http://dify.ai-role.cn/v1${req.url.replace('/api', '')}`;
+                // 构建正确的目标URL
+                const pathPart = req.url.replace('/api', '');
+                const targetUrl = `http://dify.ai-role.cn/v1${pathPart}`;
 
                 console.log('Vercel代理请求:', req.method, targetUrl);
+                console.log('请求头:', req.headers);
+                console.log('请求体:', req.body);
+
+                // 准备请求头，移除可能导致冲突的头
+                const headers = {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'Authorization': req.headers.authorization || ''
+                };
+
+                // 只添加必要的自定义头
+                if (req.headers['user-agent']) {
+                    headers['User-Agent'] = req.headers['user-agent'];
+                }
+
+                // 准备请求体
+                let body;
+                if (req.method !== 'GET' && req.method !== 'HEAD') {
+                    // 如果req.body已经是字符串，直接使用；否则序列化
+                    body = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
+                    console.log('最终请求体:', body);
+                }
 
                 const response = await fetch(targetUrl, {
                     method: req.method,
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/json',
-                        'Authorization': req.headers.authorization || '',
-                        ...req.headers
-                    },
-                    body: req.method !== 'GET' && req.method !== 'HEAD' ? JSON.stringify(req.body) : undefined
+                    headers: headers,
+                    body: body
                 });
 
-                const data = await response.text();
+                const contentType = response.headers.get('content-type');
+                let data;
+
+                if (contentType && contentType.includes('application/json')) {
+                    data = await response.json();
+                } else {
+                    data = await response.text();
+                }
 
                 console.log('Vercel代理响应状态:', response.status);
+                console.log('Vercel代理响应数据:', data);
 
+                // 设置响应头
+                res.setHeader('Content-Type', contentType || 'application/json');
                 res.status(response.status);
                 res.send(data);
             } catch (error) {
@@ -106,6 +135,10 @@ if (!isVercel) {
             }
         } else {
             // 非API请求返回404，静态文件会由Vercel自动处理
+            res.status(404).json({ error: 'Not found' });
+        }
+    };
+}
             res.status(404).json({ error: 'Not found' });
         }
     };
